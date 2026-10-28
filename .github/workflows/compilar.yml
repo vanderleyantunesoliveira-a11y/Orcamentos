@@ -1,0 +1,242 @@
+name: Compilar APK Controle de Orçamentos
+
+on:
+  workflow_dispatch:
+
+jobs:
+  construir-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Configurar o Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: 2. Configurar o Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 3. Criar os arquivos do aplicativo e telas
+        run: |
+          mkdir -p www
+          cat << 'EOF' > www/index.html
+          <!DOCTYPE html>
+          <html lang="pt-BR">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+            <title>Controle de Orçamentos</title>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+            <style>
+              :root {
+                --cor-primaria: #1b5e20;
+                --cor-secundaria: #2e7d32;
+                --cor-fundo: #f4f6f8;
+                --cor-card: #ffffff;
+                --cor-texto: #1c1c1c;
+                --cor-borda: #dcdcdc;
+              }
+              * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
+              body { background-color: var(--cor-fundo); color: var(--cor-texto); padding-bottom: 90px; }
+              header { background-color: var(--cor-primaria); color: #fff; padding: 18px 16px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+              header h1 { font-size: 20px; font-weight: 600; }
+              .barra-pesquisa { padding: 12px 16px; background: #fff; border-bottom: 1px solid var(--cor-borda); }
+              .campo-busca { width: 100%; padding: 12px; font-size: 16px; border: 1px solid var(--cor-borda); border-radius: 8px; outline: none; }
+              .lista { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+              .card-orcamento { background: var(--cor-card); border-radius: 12px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); border-left: 6px solid var(--cor-secundaria); }
+              .card-orcamento h3 { font-size: 18px; margin-bottom: 4px; }
+              .card-orcamento p { font-size: 14px; color: #555; margin-bottom: 4px; }
+              .card-valor { font-size: 17px; font-weight: bold; color: var(--cor-primaria); margin: 8px 0; }
+              .status-badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; background-color: #e8f5e9; color: #2e7d32; }
+              .acoes-card { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+              .btn-acao { flex: 1; min-width: 70px; padding: 10px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; }
+              .btn-whats { background-color: #25d366; color: #fff; }
+              .btn-pdf { background-color: #d32f2f; color: #fff; }
+              .btn-editar { background-color: #1976d2; color: #fff; }
+              .btn-excluir { background-color: #757575; color: #fff; }
+              .btn-flutuante { position: fixed; bottom: 20px; right: 20px; background-color: var(--cor-secundaria); color: #fff; border: none; border-radius: 50px; padding: 16px 24px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.3); cursor: pointer; z-index: 99; }
+              .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 200; overflow-y: auto; padding: 16px; }
+              .modal-conteudo { background: #fff; border-radius: 12px; padding: 20px; max-width: 500px; margin: 30px auto; }
+              .modal-conteudo h2 { margin-bottom: 16px; font-size: 20px; }
+              .campo { margin-bottom: 14px; }
+              .campo label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+              .campo input, .campo textarea, .campo select { width: 100%; padding: 12px; font-size: 15px; border: 1px solid var(--cor-borda); border-radius: 8px; }
+              .botoes-form { display: flex; gap: 10px; margin-top: 20px; }
+              .botoes-form button { flex: 1; padding: 14px; font-size: 16px; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; }
+              .btn-salvar { background-color: var(--cor-primaria); color: #fff; }
+              .btn-cancelar { background-color: #e0e0e0; color: #333; }
+            </style>
+          </head>
+          <body>
+            <header><h1>Controle de Orçamentos</h1></header>
+            <section class="barra-pesquisa">
+              <input type="text" id="campoPesquisa" class="campo-busca" placeholder="Pesquisar orçamento..." oninput="pesquisarOrcamentos()" />
+            </section>
+            <main class="lista" id="listaOrcamentos"></main>
+            <button class="btn-flutuante" onclick="abrirFormulario()">+ Novo Orçamento</button>
+
+            <div class="modal" id="modalFormulario">
+              <div class="modal-conteudo">
+                <h2 id="tituloModal">Novo Orçamento</h2>
+                <input type="hidden" id="orcamentoId" />
+                <div class="campo"><label>Nome do Cliente *</label><input type="text" id="cliente" required /></div>
+                <div class="campo"><label>WhatsApp (com DDD) *</label><input type="tel" id="telefone" placeholder="11999999999" required /></div>
+                <div class="campo"><label>Descrição dos Serviços *</label><textarea id="servico" rows="3"></textarea></div>
+                <div class="campo"><label>Valor Total (R$) *</label><input type="number" step="0.01" id="valor" required /></div>
+                <div class="campo"><label>Validade</label><input type="date" id="validade" /></div>
+                <div class="campo"><label>Situação</label>
+                  <select id="status">
+                    <option value="Pendente">Pendente</option>
+                    <option value="Aprovado">Aprovado</option>
+                    <option value="Recusado">Recusado</option>
+                  </select>
+                </div>
+                <div class="botoes-form">
+                  <button class="btn-cancelar" onclick="fecharFormulario()">Cancelar</button>
+                  <button class="btn-salvar" onclick="salvarOrcamento()">Salvar</button>
+                </div>
+              </div>
+            </div>
+
+            <script>
+              let orcamentos = JSON.parse(localStorage.getItem('orcamentos_dados')) || [];
+              function salvarNoDispositivo() { localStorage.setItem('orcamentos_dados', JSON.stringify(orcamentos)); }
+              function renderizarLista(itens = orcamentos) {
+                const container = document.getElementById('listaOrcamentos');
+                container.innerHTML = '';
+                if (itens.length === 0) {
+                  container.innerHTML = '<p style="text-align:center; color:#777; margin-top:40px;">Nenhum orçamento cadastrado.</p>';
+                  return;
+                }
+                itens.forEach((item) => {
+                  const card = document.createElement('div');
+                  card.className = 'card-orcamento';
+                  card.innerHTML = `
+                    <h3>${item.cliente}</h3>
+                    <p><strong>Contato:</strong> ${item.telefone}</p>
+                    <p><strong>Descrição:</strong> ${item.servico}</p>
+                    <p class="card-valor">R$ ${parseFloat(item.valor).toFixed(2).replace('.', ',')}</p>
+                    <span class="status-badge">${item.status}</span>
+                    <div class="acoes-card">
+                      <button class="btn-acao btn-whats" onclick="enviarWhatsApp('${item.id}')">WhatsApp</button>
+                      <button class="btn-acao btn-pdf" onclick="gerarPDF('${item.id}')">PDF</button>
+                      <button class="btn-acao btn-editar" onclick="editarOrcamento('${item.id}')">Editar</button>
+                      <button class="btn-acao btn-excluir" onclick="excluirOrcamento('${item.id}')">Excluir</button>
+                    </div>
+                  `;
+                  container.appendChild(card);
+                });
+              }
+              function abrirFormulario() {
+                document.getElementById('orcamentoId').value = '';
+                document.getElementById('cliente').value = '';
+                document.getElementById('telefone').value = '';
+                document.getElementById('servico').value = '';
+                document.getElementById('valor').value = '';
+                document.getElementById('validade').value = '';
+                document.getElementById('status').value = 'Pendente';
+                document.getElementById('tituloModal').innerText = 'Novo Orçamento';
+                document.getElementById('modalFormulario').style.display = 'block';
+              }
+              function fecharFormulario() { document.getElementById('modalFormulario').style.display = 'none'; }
+              function salvarOrcamento() {
+                const id = document.getElementById('orcamentoId').value;
+                const cliente = document.getElementById('cliente').value.trim();
+                const telefone = document.getElementById('telefone').value.trim().replace(/\\D/g, '');
+                const servico = document.getElementById('servico').value.trim();
+                const valor = document.getElementById('valor').value.trim();
+                const validade = document.getElementById('validade').value;
+                const status = document.getElementById('status').value;
+                if (!cliente || !telefone || !valor) { alert('Preencha os campos obrigatórios!'); return; }
+                if (id) {
+                  const idx = orcamentos.findIndex(o => o.id === id);
+                  if (idx !== -1) orcamentos[idx] = { id, cliente, telefone, servico, valor, validade, status };
+                } else {
+                  orcamentos.unshift({ id: Date.now().toString(), cliente, telefone, servico, valor, validade, status });
+                }
+                salvarNoDispositivo();
+                renderizarLista();
+                fecharFormulario();
+              }
+              function editarOrcamento(id) {
+                const item = orcamentos.find(o => o.id === id);
+                if (!item) return;
+                document.getElementById('orcamentoId').value = item.id;
+                document.getElementById('cliente').value = item.cliente;
+                document.getElementById('telefone').value = item.telefone;
+                document.getElementById('servico').value = item.servico;
+                document.getElementById('valor').value = item.valor;
+                document.getElementById('validade').value = item.validade || '';
+                document.getElementById('status').value = item.status;
+                document.getElementById('tituloModal').innerText = 'Editar Orçamento';
+                document.getElementById('modalFormulario').style.display = 'block';
+              }
+              function excluirOrcamento(id) {
+                if (confirm('Deseja excluir este orçamento?')) {
+                  orcamentos = orcamentos.filter(o => o.id !== id);
+                  salvarNoDispositivo();
+                  renderizarLista();
+                }
+              }
+              function pesquisarOrcamentos() {
+                const termo = document.getElementById('campoPesquisa').value.toLowerCase();
+                renderizarLista(orcamentos.filter(o => o.cliente.toLowerCase().includes(termo) || o.servico.toLowerCase().includes(termo)));
+              }
+              function enviarWhatsApp(id) {
+                const item = orcamentos.find(o => o.id === id);
+                if (!item) return;
+                const msg = `Olá, ${item.cliente}! Segue o seu orçamento:%0A%0A*Serviço:* ${item.servico}%0A*Valor:* R$ ${parseFloat(item.valor).toFixed(2).replace('.', ',')}%0A*Situação:* ${item.status}`;
+                window.open(`https://wa.me/55${item.telefone}?text=${msg}`, '_blank');
+              }
+              function gerarPDF(id) {
+                const item = orcamentos.find(o => o.id === id);
+                if (!item) return;
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                doc.setFontSize(20);
+                doc.text("ORÇAMENTO", 20, 22);
+                doc.setFontSize(12);
+                doc.text(`Cliente: ${item.cliente}`, 20, 40);
+                doc.text(`WhatsApp: ${item.telefone}`, 20, 50);
+                doc.line(20, 60, 190, 60);
+                doc.text("Serviço:", 20, 75);
+                doc.text(item.servico, 20, 85);
+                doc.line(20, 105, 190, 105);
+                doc.setFontSize(16);
+                doc.text(`VALOR TOTAL: R$ ${parseFloat(item.valor).toFixed(2).replace('.', ',')}`, 20, 120);
+                doc.save(`Orcamento_${item.cliente.replace(/\\s+/g, '_')}.pdf`);
+              }
+              renderizarLista();
+            </script>
+          </body>
+          </html>
+          EOF
+
+          cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.controleorcamentos.app",
+            "appName": "Controle de Orçamentos",
+            "webDir": "www",
+            "bundledWebRuntime": false
+          }
+          EOF
+
+          npm init -y
+          npm install @capacitor/core@6.0.0 @capacitor/cli@6.0.0 @capacitor/android@6.0.0
+          npx cap add android
+          npx cap sync android
+
+      - name: 4. Compilar o arquivo APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: 5. Disponibilizar o arquivo APK para você baixar
+        uses: actions/upload-artifact@v4
+        with:
+          name: Controle-de-Orcamentos-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
